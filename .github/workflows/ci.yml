@@ -1,0 +1,90 @@
+name: Testes Automatizados de API
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  java-tests:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        java: [17]  # Pode variar dependendo da versão utilizada no projeto
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: temurin
+
+      - name: Cache Maven packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Limpando pasta de resultados
+        run: rm -rf target/cucumber-report.html target/cucumber-report.json target/cucumber-reports
+
+      - name: Instalar dependências e compilar
+        run: mvn clean install -DskipTests=true -Dfile.encoding=UTF-8
+
+      - name: Executar testes automatizados
+        run: mvn test -Dfile.encoding=UTF-8
+
+      - name: Criar pasta de reports
+        run: mkdir -p target/cucumber-reports
+
+      - name: Copiar reports gerados
+        run: |
+          if [ -f target/cucumber-report.html ]; then
+            cp target/cucumber-report.html target/cucumber-reports/
+          fi
+          if [ -f target/cucumber-report.json ]; then
+            cp target/cucumber-report.json target/cucumber-reports/
+          fi
+
+      - name: Salvar artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cucumber-reports
+          path: target/cucumber-reports
+          retention-days: 30
+
+      - name: Resumo da Execução de Testes Automatizados
+        if: always()
+        run: |
+          echo "# 📊 Resumo da Execução" >> $GITHUB_STEP_SUMMARY
+
+          JSON_FILE=target/cucumber-reports/cucumber-report.json
+
+          if [ -f "$JSON_FILE" ] && [ -s "$JSON_FILE" ]; then
+            TOTAL=$(jq '[.[] | .elements[]?] | length' "$JSON_FILE")
+
+            FAILED=$(jq '[.[] | .elements[]? | select(.steps? | map(.result?.status?) | index("failed"))] | length' "$JSON_FILE")
+
+            PASSED=$((TOTAL - FAILED))
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## Resultados da Execução" >> $GITHUB_STEP_SUMMARY
+            echo "- **Total de Testes**: $TOTAL" >> $GITHUB_STEP_SUMMARY
+            echo "- **Passaram**: ✅ $PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "- **Falharam**: ❌ $FAILED" >> $GITHUB_STEP_SUMMARY
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## 📥 Artifacts" >> $GITHUB_STEP_SUMMARY
+            echo "- HTML Report: target/cucumber-reports/cucumber-report.html" >> $GITHUB_STEP_SUMMARY
+            echo "- JSON Report: target/cucumber-reports/cucumber-report.json" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Nenhum resultado do Cucumber encontrado ou arquivo vazio" >> $GITHUB_STEP_SUMMARY
+          fi
